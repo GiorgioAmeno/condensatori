@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Laboratorio Virtuale – Capacità</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body{
+    margin:0;
+    font-family:Segoe UI, sans-serif;
+    background:#0d1117;
+    color:#e0e0e0;
+}
+header{
+    background:linear-gradient(90deg,#0f4c75,#3282b8);
+    padding:15px;
+    text-align:center;
+    font-size:1.6em;
+}
+.lab{
+    display:grid;
+    grid-template-columns:320px 1fr 420px;
+    gap:20px;
+    padding:20px;
+}
+.panel{
+    background:#121a24;
+    border-radius:12px;
+    padding:15px;
+    border:1px solid #2c3e50;
+}
+.panel h3{
+    margin-top:0;
+    color:#4dd0e1;
+}
+input[type=range]{width:100%;}
+button{margin-top:10px;width:100%;padding:6px;}
+
+/* CONDENSATORE */
+#capacitorBox{
+    height:320px;
+    background:#0a121a;
+    border-radius:10px;
+    position:relative;
+}
+
+/* ARMATURE */
+.plate{
+    position:absolute;
+    background:rgba(200,200,200,0.25);
+    border:2px solid #aaa;
+}
+
+/* CARICHE */
+.charge{
+    width:8px;
+    height:8px;
+    border-radius:50%;
+    position:absolute;
+}
+.pos{background:red;}
+.neg{background:cyan;}
+
+/* DIELETTRICO */
+#dielectric{
+    position:absolute;
+    background:rgba(80,160,255,0.25);
+    border:1px dashed #4dd0e1;
+}
+
+/* ESERCIZIO */
+.exerciseBox{
+    margin-top:10px;
+    padding:8px;
+    background:#0f1722;
+    border-radius:8px;
+    font-size:0.9em;
+}
+.success{
+    margin-top:10px;
+    padding:8px;
+    background:#0f5132;
+    border-radius:8px;
+    text-align:center;
+    color:#a6f4c5;
+}
+.hidden{display:none;}
+</style>
+</head>
+
+<body>
+
+<header>Laboratorio Virtuale – Capacità</header>
+
+<section>
+<h2 style="padding-left:20px;">Esperimento 1 – Andamento tensione su una capacità</h2>
+
+<div class="lab">
+
+<!-- CONTROLLI -->
+<div class="panel">
+<h3>Parametri fisici</h3>
+
+<label>εr</label>
+<input id="er" type="range" min="1" max="10" step="0.1" value="4">
+
+<label>d (mm)</label>
+<input id="d" type="range" min="0.5" max="5" step="0.1" value="2">
+
+<label>A (dm²)</label>
+<input id="A" type="range" min="1" max="10" step="0.1" value="5">
+
+<h3>Tensione</h3>
+<input id="V" type="range" min="-100" max="100" step="1" value="20">
+<div id="Vval">20 V</div>
+
+<button onclick="toggleExercise()">Modalità esercizio</button>
+
+<div id="exerciseBox" class="exerciseBox hidden"></div>
+
+<button onclick="checkExercise()">Verifica esercizio</button>
+
+</div>
+
+<!-- CONDENSATORE -->
+<div class="panel">
+<h3>Visualizzazione fisica</h3>
+<div id="capacitorBox">
+    <div id="leftPlate" class="plate"></div>
+    <div id="rightPlate" class="plate"></div>
+    <div id="dielectric"></div>
+</div>
+</div>
+
+<!-- GRANDEZZE -->
+<div class="panel">
+<h3>Grandezze</h3>
+<p>C = <span id="Cval"></span> nF</p>
+<p>Q = <span id="Qval"></span> nC</p>
+<canvas id="qvChart" height="220"></canvas>
+<div id="successMsg" class="success hidden">
+🎉 Complimenti! Esercizio completato!
+</div>
+</div>
+
+</div>
+</section>
+
+<script>
+
+const eps0 = 8.854e-12;
+const QMAX = 8e-7;
+const TOL = 0.05; // 5%
+
+let exercise = false;
+let targetC = 0;
+let targetQs = [];
+let foundQs = [
+    {value:0, done:false},
+    {value:0, done:false},
+    {value:0, done:false}
+];
+
+const erI=er,dI=d,AI=A,VI=V;
+const Vval=document.getElementById("Vval");
+const Cval=document.getElementById("Cval");
+const Qval=document.getElementById("Qval");
+
+const capBox=document.getElementById("capacitorBox");
+const leftPlate=document.getElementById("leftPlate");
+const rightPlate=document.getElementById("rightPlate");
+const dielectric=document.getElementById("dielectric");
+
+[erI,dI,AI,VI].forEach(i=>i.addEventListener("input",update));
+
+/* GRAFICO */
+const chart=new Chart(qvChart,{
+    type:"line",
+    data:{datasets:[
+        {label:"Q = C·V",borderColor:"#4dd0e1",data:[],tension:0},
+        {label:"Punto di lavoro",data:[],backgroundColor:"yellow",pointRadius:6,showLine:false}
+    ]},
+    options:{
+        scales:{
+            x:{type:"linear",min:-100,max:100,title:{display:true,text:"Tensione (V)"}},
+            y:{type:"linear",min:-QMAX,max:QMAX,title:{display:true,text:"Carica (C)"}}
+        }
+    }
+});
+
+/*============random========*/
+function randomNoZero(min, max, deadZone = 10){
+    let v;
+    do {
+        v = min + Math.random()*(max-min);
+    } while (Math.abs(v) < deadZone);
+    return v;
+}
+
+/* ===================== ESERCIZIO ===================== */
+
+function toggleExercise(){
+
+    exercise = !exercise;
+    foundQs = foundQs.map(o=>({...o,done:false}));
+    document.getElementById("successMsg").classList.add("hidden");
+
+    const box = document.getElementById("exerciseBox");
+
+    if(!exercise){
+        box.classList.add("hidden");
+        return;
+    }
+
+    // CAPACITÀ 0.02 nF – 17.7 nF
+    targetC = random(0.02e-9, 17.7e-9);
+
+    // tensioni tra -100 e 100 V
+    const Vs = [
+		randomNoZero(-100,100,10),
+		randomNoZero(-100,100,10),
+		randomNoZero(-100,100,10)
+	];
+
+    // Q = C·V
+    targetQs = Vs.map(v => targetC * v);
+
+    foundQs.forEach((o,i)=>{
+        o.value = targetQs[i];
+    });
+
+    box.classList.remove("hidden");
+    box.innerHTML =
+    `<b>Capacità richiesta:</b><br>
+     ${(targetC*1e9).toFixed(3)} nF (±5%)<br><br>
+
+     <b>Cariche richieste:</b><br>
+     Q₁ = ${(targetQs[0]*1e9).toFixed(3)} nC<br>
+     Q₂ = ${(targetQs[1]*1e9).toFixed(3)} nC<br>
+     Q₃ = ${(targetQs[2]*1e9).toFixed(3)} nC<br><br>
+
+     <i>Usa tensioni tra -100 V e +100 V</i>`;
+}
+
+/* ===================== VERIFICA ===================== */
+
+function checkExercise(){
+
+    if(!exercise) return;
+
+    const er=+erI.value;
+    const dmm=+dI.value;
+    const Adm2=+AI.value;
+    const V=+VI.value;
+
+    const d=dmm*1e-3;
+    const A=Adm2*0.01;
+    const C=eps0*er*A/d;
+    const Q=C*V;
+
+    // capacità corretta
+    const cOK = (Math.abs(C - targetC))/targetC < TOL+5;
+
+    const msgBox = document.getElementById("exerciseBox");
+
+	if(!cOK){
+
+		const err = document.createElement("div");
+		err.style.color = "#ff6b6b";
+		err.textContent = "✖ Capacità non corretta";
+
+		msgBox.appendChild(err);
+		return;
+	}
+
+	const ok = document.createElement("div");
+	ok.style.color = "#a6f4c5";
+	ok.textContent = "✔ Capacità corretta";
+
+	msgBox.appendChild(ok);
+
+    // controllo cariche
+    foundQs.forEach((o,i)=>{
+        if(!o.done){
+            if(Math.abs(Q - o.value)/Math.abs(o.value) < TOL){
+                o.done = true;
+                showMiniFeedback(i+1);
+            }
+        }
+    });
+
+    if(foundQs.every(o=>o.done)){
+        document.getElementById("successMsg").classList.remove("hidden");
+    }
+}
+
+/* ===================== FEEDBACK ===================== */
+
+function showMiniFeedback(n){
+    const box=document.getElementById("exerciseBox");
+    const msg=document.createElement("div");
+    msg.style.color="#a6f4c5";
+    msg.textContent=`✔ Q${n} corretta`;
+    box.appendChild(msg);
+}
+
+/* ===================== SIMULAZIONE ===================== */
+
+function update(){
+
+    const er=+erI.value;
+    const dmm=+dI.value;
+    const Adm2=+AI.value;
+    const V=+VI.value;
+
+    Vval.textContent=V+" V";
+
+    const d=dmm*1e-3;
+    const A=Adm2*0.01;
+    const C=eps0*er*A/d;
+    const Q=C*V;
+
+    Cval.textContent=(C*1e9).toFixed(2);
+    Qval.textContent=(Q*1e9).toFixed(2);
+
+    drawCapacitor(Adm2,dmm,Q);
+    updateChart(C,V,Q);
+}
+
+/* ===================== GRAFICA ===================== */
+
+function drawCapacitor(A,d,Q){
+
+    leftPlate.innerHTML="";
+    rightPlate.innerHTML="";
+
+    const plateH=60+A*18;
+    const gap=20+d*8;
+    const center=capBox.clientWidth/2;
+    const plateW=80;
+
+    leftPlate.style.width=plateW+"px";
+    leftPlate.style.height=plateH+"px";
+    leftPlate.style.left=(center-gap/2-plateW)+"px";
+    leftPlate.style.top=(160-plateH/2)+"px";
+
+    rightPlate.style.width=plateW+"px";
+    rightPlate.style.height=plateH+"px";
+    rightPlate.style.left=(center+gap/2)+"px";
+    rightPlate.style.top=leftPlate.style.top;
+
+    dielectric.style.left=(center-gap/2)+"px";
+    dielectric.style.width=gap+"px";
+    dielectric.style.top=leftPlate.style.top;
+    dielectric.style.height=plateH+"px";
+	
+	const spacing=16
+    
+    const cols=Math.floor(plateW/spacing);
+    const rows=Math.floor(plateH/spacing);
+    const maxCharges=cols*rows;
+    const filled=Math.round(Math.abs(Q)/QMAX*maxCharges);
+
+	const spa=maxCharges/filled;
+
+    const startX=(plateW-(cols-1)*spacing)/2;
+    const startY=(plateH-(rows-1)*spacing)/2;
+
+    const signLeft=Q>=0?"pos":"neg";
+    const signRight=Q>=0?"neg":"pos";
+
+    let count=0;
+    for(let c=0;c<cols && count<filled;c++){
+        for(let r=0;r<rows && count<filled;r=(r+(spa)/cols)){
+            place(leftPlate ,startX+plateW-(c+1.7)*spacing,startY+(r-0.7)*spacing,signLeft);
+            place(rightPlate,startX+c*spacing,startY+(r-0.7)*spacing,signRight);
+            count++;
+        }
+    }
+}
+
+function place(plate,x,y,type){
+    const ch=document.createElement("div");
+    ch.className="charge "+type;
+    ch.style.left=x+"px";
+    ch.style.top=y+"px";
+    plate.appendChild(ch);
+}
+
+
+function updateChart(C,V,Q){
+    const line=[];
+    for(let v=-100;v<=100;v+=2){
+        line.push({x:v,y:C*v});
+    }
+    chart.data.datasets[0].data=line;
+    chart.data.datasets[1].data=[{x:V,y:Q}];
+    chart.update();
+}
+
+function random(min,max){
+    return min + Math.random()*(max-min);
+}
+
+update();
+
+</script>
+</body>
+</html>
